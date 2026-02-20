@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Topic Radar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="header-left">
+      <span class="logo">⬡ Topic Radar</span>
+      <span class="tagline">Search the web. Get the insight.</span>
+    </div>
+  </header>
+
+  <!-- ── App shell: history | search+results ── -->
+  <div class="app-shell">
+
+    <!-- Left: history sidebar -->
+    <aside class="history-sidebar" id="history-sidebar">
+      <div class="sidebar-header">
+        <span>History</span>
+        <button class="btn-icon" id="refresh-history" title="Refresh">↺</button>
+      </div>
+      <ul class="history-list" id="history-list">
+        <li class="history-empty">No searches yet.</li>
+      </ul>
+    </aside>
+
+    <!-- Centre: search controls + dashboard -->
+    <main class="main-content">
+
+      <!-- Search bar -->
+      <form class="search-bar" id="search-form">
+        <input
+          type="text"
+          id="topic-input"
+          placeholder="Enter a topic to research…"
+          autocomplete="off"
+          required
+        />
+        <button type="submit" class="btn-primary" id="search-btn">Research</button>
+      </form>
+
+      <!-- Status line -->
+      <div class="status-bar" id="status-bar"></div>
+
+      <!-- Dashboard: hidden until first search -->
+      <div class="dashboard" id="dashboard" hidden>
+
+        <!-- Row 1: Overview + Sources -->
+        <section class="card card-overview" id="card-overview">
+          <h3 class="card-title">Overview</h3>
+          <p class="card-body" id="overview-text"></p>
+        </section>
+
+        <section class="card card-sources" id="card-sources">
+          <h3 class="card-title">Sources</h3>
+          <ul class="source-chips" id="source-list"></ul>
+        </section>
+
+        <!-- Row 2: Key Points + Trends -->
+        <section class="card card-keypoints" id="card-keypoints">
+          <h3 class="card-title">Key Points</h3>
+          <ul class="bullet-list" id="keypoints-list"></ul>
+        </section>
+
+        <section class="card card-trends" id="card-trends">
+          <h3 class="card-title">Trends &amp; Context</h3>
+          <p class="card-body" id="trends-text"></p>
+        </section>
+
+        <!-- Row 3: Gaps (full width) -->
+        <section class="card card-gaps" id="card-gaps">
+          <h3 class="card-title">Gaps &amp; Caveats</h3>
+          <p class="card-body" id="gaps-text"></p>
+        </section>
+
+        <!-- Row 4: Raw stream (visible while streaming) -->
+        <section class="card card-stream" id="card-stream">
+          <h3 class="card-title">
+            <span class="spinner" id="stream-spinner"></span>
+            Live Research
+          </h3>
+          <pre class="stream-box" id="stream-box"></pre>
+        </section>
+
+      </div><!-- /.dashboard -->
+
+    </main>
+  </div><!-- /.app-shell -->
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
