@@ -1,235 +1,292 @@
-/**
- * Topic Radar — Frontend v2
- *
- * SSE event types received from /api/stream:
- *   {type:"token",      text:"..."}      → append to live stream box
- *   {type:"source",     data:{...}}      → add chip to sources card
- *   {type:"structured", data:{...}}      → populate all summary cards
- *   {type:"history_id", id:123}          → refresh history sidebar
- *   {type:"error",      message:"..."}   → show error
- *   "[DONE]"                             → close stream
- */
-
 "use strict";
 
-// ── DOM refs ────────────────────────────────────────────────────────────────
-const searchForm     = document.getElementById("search-form");
-const topicInput     = document.getElementById("topic-input");
-const searchBtn      = document.getElementById("search-btn");
-const statusBar      = document.getElementById("status-bar");
-const dashboard      = document.getElementById("dashboard");
-const streamBox      = document.getElementById("stream-box");
-const streamSpinner  = document.getElementById("stream-spinner");
-const overviewText   = document.getElementById("overview-text");
-const keypointsList  = document.getElementById("keypoints-list");
-const trendsText     = document.getElementById("trends-text");
-const gapsText       = document.getElementById("gaps-text");
-const sourceList     = document.getElementById("source-list");
-const historyList    = document.getElementById("history-list");
-const refreshBtn     = document.getElementById("refresh-history");
+// ── Card labels per lens ─────────────────────────────────────
+const LENS_LABELS = {
+  general:    { overview: "Overview",        keypoints: "Key Points",             trends: "Trends & Context",  gaps: "Gaps & Caveats" },
+  scientific: { overview: "Abstract",        keypoints: "Key Findings",           trends: "Research Trends",   gaps: "Limitations & Gaps" },
+  startup:    { overview: "Summary",         keypoints: "Opportunities",          trends: "Market Trends",     gaps: "Risks & Challenges" },
+  vc:         { overview: "Market Overview", keypoints: "Investment Highlights",  trends: "Market Trends",     gaps: "Due Diligence Notes" },
+};
 
-let activeES = null;   // current EventSource
+// ── DOM refs ─────────────────────────────────────────────────
+const searchForm    = document.getElementById("search-form");
+const topicInput    = document.getElementById("topic-input");
+const searchBtn     = document.getElementById("search-btn");
+const stopBtn       = document.getElementById("stop-btn");
+const statusBar     = document.getElementById("status-bar");
+const emptyState    = document.getElementById("empty-state");
 
-// ── Search submit ────────────────────────────────────────────────────────────
+const overviewText  = document.getElementById("overview-text");
+const keypointsList = document.getElementById("keypoints-list");
+const trendsText    = document.getElementById("trends-text");
+const gapsText      = document.getElementById("gaps-text");
+const sourceList    = document.getElementById("source-list");
+
+const labelOverview  = document.getElementById("label-overview");
+const labelKeypoints = document.getElementById("label-keypoints");
+const labelTrends    = document.getElementById("label-trends");
+const labelGaps      = document.getElementById("label-gaps");
+
+const historyList   = document.getElementById("history-list");
+
+const cardSources   = document.getElementById("card-sources");
+const contentCards  = ["card-overview","card-keypoints","card-trends","card-gaps"]
+  .map(id => document.getElementById(id));
+const allCards      = [cardSources, ...contentCards];
+
+// ── Active request controller ─────────────────────────────────
+let activeController = null;
+
+// ── Helpers ───────────────────────────────────────────────────
+function getLens() {
+  return (document.querySelector("input[name='lens']:checked") || {}).value || "general";
+}
+
+function setCardLabels(lens) {
+  const L = LENS_LABELS[lens] || LENS_LABELS.general;
+  labelOverview.textContent  = L.overview;
+  labelKeypoints.textContent = L.keypoints;
+  labelTrends.textContent    = L.trends;
+  labelGaps.textContent      = L.gaps;
+}
+
+// ── Search ────────────────────────────────────────────────────
 searchForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const topic = topicInput.value.trim();
-  if (!topic) return;
-  startResearch(topic);
+  if (topic) startResearch(topic, getLens());
 });
 
-function startResearch(topic) {
-  if (activeES) { activeES.close(); activeES = null; }
+async function startResearch(topic, lens) {
+  // Cancel any in-flight request
+  if (activeController) { activeController.abort(); activeController = null; }
 
   resetDashboard();
-  dashboard.hidden = false;
-  setStatus(`Researching "${topic}"…`, "spinner");
+  setCardLabels(lens);
+  setStatus(`<span class="spinner"></span>Researching "${esc(topic)}"…`);
   setLoading(true);
 
-  const url = `/api/stream?topic=${encodeURIComponent(topic)}`;
-  activeES = new EventSource(url);
+  activeController = new AbortController();
 
-  activeES.onmessage = (e) => {
-    if (e.data === "[DONE]") {
-      activeES.close();
-      activeES = null;
-      streamSpinner.style.display = "none";
-      setStatus("Done.", "success");
-      setLoading(false);
-      return;
+  try {
+    const resp = await fetch(
+      `/api/stream?topic=${encodeURIComponent(topic)}&lens=${encodeURIComponent(lens)}`,
+      { signal: activeController.signal }
+    );
+
+    if (!resp.ok) { showError(`Server error ${resp.status}`); return; }
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buf += decoder.decode(value, { stream: true });
+
+      // Flush complete SSE messages (delimited by \n\n)
+      let boundary;
+      while ((boundary = buf.indexOf("\n\n")) !== -1) {
+        const chunk = buf.slice(0, boundary);
+        buf = buf.slice(boundary + 2);
+        for (const line of chunk.split("\n")) {
+          if (line.startsWith("data: ")) handleData(line.slice(6));
+        }
+      }
     }
-
-    let msg;
-    try { msg = JSON.parse(e.data); }
-    catch { return; }
-
-    switch (msg.type) {
-      case "token":
-        streamBox.textContent += msg.text;
-        streamBox.scrollTop = streamBox.scrollHeight;
-        break;
-
-      case "source":
-        appendSource(msg.data);
-        break;
-
-      case "structured":
-        populateCards(msg.data);
-        // Hide live stream box now that cards are filled
-        document.getElementById("card-stream").style.opacity = "0.4";
-        break;
-
-      case "history_id":
-        loadHistory();
-        break;
-
-      case "error":
-        setStatus(`Error: ${msg.message}`, "error");
-        activeES.close();
-        activeES = null;
-        streamSpinner.style.display = "none";
-        setLoading(false);
-        break;
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      showError("Connection lost. Please try again.");
     }
-  };
-
-  activeES.onerror = () => {
-    setStatus("Connection lost. Please try again.", "error");
-    activeES.close();
-    activeES = null;
-    streamSpinner.style.display = "none";
+  } finally {
+    activeController = null;
     setLoading(false);
-  };
+  }
 }
 
-// ── Card population ──────────────────────────────────────────────────────────
-function populateCards(summary) {
-  overviewText.textContent = summary.overview || "";
+function handleData(raw) {
+  if (raw === "[DONE]") {
+    setStatus("Done.", "success");
+    return;
+  }
+
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+
+  switch (msg.type) {
+    case "status":
+      setStatus(`<span class="spinner"></span>${esc(msg.text)}`);
+      break;
+
+    case "source":
+      appendSource(msg.data);
+      break;
+
+    case "structured":
+      populateCards(msg.data);
+      showContentCards();
+      break;
+
+    case "history_id":
+      loadHistory();
+      break;
+
+    case "error":
+      showError(msg.message);
+      break;
+  }
+}
+
+// ── Populate cards ────────────────────────────────────────────
+function populateCards(s) {
+  overviewText.textContent = s.overview || "";
+  trendsText.textContent   = s.trends   || "";
+  gapsText.textContent     = s.gaps_and_caveats || "";
 
   keypointsList.innerHTML = "";
-  (summary.key_points || []).forEach((pt) => {
+  (s.key_points || []).forEach(pt => {
     const li = document.createElement("li");
     li.textContent = pt;
     keypointsList.appendChild(li);
   });
 
-  trendsText.textContent = summary.trends || "";
-  gapsText.textContent   = summary.gaps_and_caveats || "";
-
-  // If sources came via structured output (in case SSE sources were missed)
-  if (summary.sources && summary.sources.length) {
-    sourceList.innerHTML = "";
-    summary.sources.forEach(appendSource);
+  // Sources from structured (fill any not already streamed)
+  if (s.sources && s.sources.length && !sourceList.children.length) {
+    s.sources.slice(0, 5).forEach(appendSource);
   }
 }
 
 function appendSource(src) {
-  // Avoid duplicate chips
-  if (document.querySelector(`[data-url="${CSS.escape(src.url)}"]`)) return;
+  if (!src.url || document.querySelector(`[data-url="${CSS.escape(src.url)}"]`)) return;
+  showSourcesCard();
 
-  const li = document.createElement("li");
-  li.dataset.url = src.url;
-  li.innerHTML = `
-    <a href="${esc(src.url)}" target="_blank" rel="noopener"
-       title="${esc(src.title)}">${esc(src.title || src.url)}</a>
-    ${src.snippet ? `<div class="src-snippet">${esc(src.snippet)}</div>` : ""}
-  `;
-  sourceList.appendChild(li);
+  const host = (() => {
+    try { return new URL(src.url).hostname.replace("www.", ""); } catch { return src.url; }
+  })();
+
+  const a = document.createElement("a");
+  a.className   = "source-chip";
+  a.href        = esc(src.url);
+  a.target      = "_blank";
+  a.rel         = "noopener";
+  a.dataset.url = src.url;
+  a.innerHTML   = `<span class="chip-title">${esc(src.title || host)}</span>
+                   <span class="chip-url">${esc(host)}</span>`;
+  sourceList.appendChild(a);
 }
 
-// ── History sidebar ──────────────────────────────────────────────────────────
+// ── Card visibility ───────────────────────────────────────────
+function showSourcesCard() {
+  emptyState.classList.add("hidden");
+  cardSources.classList.remove("hidden");
+}
+
+function showContentCards() {
+  emptyState.classList.add("hidden");
+  contentCards.forEach(c => c.classList.remove("hidden"));
+}
+
+// ── History ───────────────────────────────────────────────────
 async function loadHistory() {
   try {
-    const res = await fetch("/api/history");
-    const entries = await res.json();
-
+    const entries = await fetch("/api/history").then(r => r.json());
     historyList.innerHTML = "";
-
     if (!entries.length) {
       historyList.innerHTML = '<li class="history-empty">No searches yet.</li>';
       return;
     }
-
-    entries.forEach((entry) => {
-      const li = document.createElement("li");
+    entries.forEach(e => {
+      const li   = document.createElement("li");
       li.className = "history-item";
+      const lens = e.lens || "general";
       li.innerHTML = `
-        <div class="h-topic" title="${esc(entry.topic)}">${esc(entry.topic)}</div>
-        <div class="h-date">${formatDate(entry.created_at)}</div>
-      `;
-      li.addEventListener("click", () => loadHistoryEntry(entry.id, li));
+        <div class="h-lens-dot ${esc(lens)}"></div>
+        <div>
+          <div class="h-topic" title="${esc(e.topic)}">${esc(e.topic)}</div>
+          <div class="h-date">${fmtDate(e.created_at)}</div>
+        </div>`;
+      li.addEventListener("click", () => loadEntry(e.id, li));
       historyList.appendChild(li);
     });
-  } catch (err) {
-    console.error("Failed to load history:", err);
-  }
+  } catch (err) { console.error(err); }
 }
 
-async function loadHistoryEntry(id, itemEl) {
-  // Mark active
-  document.querySelectorAll(".history-item").forEach((el) => el.classList.remove("active"));
+async function loadEntry(id, itemEl) {
+  document.querySelectorAll(".history-item").forEach(el => el.classList.remove("active"));
   if (itemEl) itemEl.classList.add("active");
-
   try {
-    const res = await fetch(`/api/history/${id}`);
-    if (!res.ok) throw new Error("Not found");
-    const entry = await res.json();
-
+    const entry = await fetch(`/api/history/${id}`).then(r => r.json());
     topicInput.value = entry.topic;
+
+    const lens = entry.summary?.lens || "general";
+    const pill = document.querySelector(`input[name='lens'][value='${lens}']`);
+    if (pill) pill.checked = true;
+
     resetDashboard();
-    dashboard.hidden = false;
-    document.getElementById("card-stream").style.opacity = "1";
-    streamBox.textContent = "(loaded from history)";
+    setCardLabels(lens);
     populateCards(entry.summary);
-    setStatus(`Loaded: "${entry.topic}"`, "success");
-  } catch (err) {
-    setStatus("Failed to load history entry.", "error");
-  }
+    showSourcesCard();
+    showContentCards();
+    setStatus(`Loaded: "${esc(entry.topic)}"`, "success");
+  } catch { setStatus("Failed to load.", "error"); }
 }
 
-// Load history on page boot
 loadHistory();
-refreshBtn.addEventListener("click", loadHistory);
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── UI helpers ────────────────────────────────────────────────
 function resetDashboard() {
-  overviewText.textContent  = "";
-  keypointsList.innerHTML   = "";
-  trendsText.textContent    = "";
-  gapsText.textContent      = "";
-  sourceList.innerHTML      = "";
-  streamBox.textContent     = "";
-  statusBar.textContent     = "";
-  statusBar.className       = "status-bar";
-  streamSpinner.style.display = "inline-block";
-  document.getElementById("card-stream").style.opacity = "1";
+  overviewText.textContent = "";
+  keypointsList.innerHTML  = "";
+  trendsText.textContent   = "";
+  gapsText.textContent     = "";
+  sourceList.innerHTML     = "";
+  statusBar.textContent    = "";
+  statusBar.className      = "status";
+  allCards.forEach(c => c.classList.add("hidden"));
+  emptyState.classList.remove("hidden");
 }
 
-function setStatus(msg, type = "") {
-  statusBar.innerHTML = type === "spinner"
-    ? `<span class="spinner" style="margin-right:6px"></span>${esc(msg)}`
-    : esc(msg);
-  statusBar.className = `status-bar ${type === "spinner" ? "" : type}`;
+function setStatus(html, type = "") {
+  statusBar.innerHTML = html;
+  statusBar.className = `status ${type}`.trim();
+}
+
+function showError(message) {
+  document.getElementById("error-banner")?.remove();
+  const banner = document.createElement("div");
+  banner.id        = "error-banner";
+  banner.className = "error-banner";
+  banner.innerHTML = `
+    <span class="error-icon">⚠</span>
+    <span class="error-msg">${esc(message)}</span>
+    <button class="error-close" onclick="this.parentElement.remove()">✕</button>`;
+  document.querySelector(".layout").prepend(banner);
+  setStatus("", "");
 }
 
 function setLoading(on) {
-  searchBtn.disabled   = on;
-  topicInput.disabled  = on;
+  searchBtn.disabled  = on;
+  topicInput.disabled = on;
+  stopBtn.classList.toggle("hidden", !on);
 }
 
-function formatDate(iso) {
+stopBtn.addEventListener("click", () => {
+  if (activeController) { activeController.abort(); activeController = null; }
+  setLoading(false);
+  setStatus("Stopped.", "");
+});
+
+function fmtDate(iso) {
   try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short", day: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
+    return new Date(iso).toLocaleString(undefined, { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
   } catch { return iso; }
 }
 
-function esc(str) {
-  if (!str) return "";
-  return String(str)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+function esc(s) {
+  if (!s) return "";
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }

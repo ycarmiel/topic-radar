@@ -1,105 +1,127 @@
-# Topic Radar
+# TopicRadar
 
-> Search the web on any topic, then get an AI-powered summary dashboard — all in one place.
+> AI-powered adaptive research assistant — search any topic, get structured insights instantly.
+
+---
 
 ## What It Does
 
-1. **Search** — Enter a topic. Topic Radar queries DuckDuckGo and fetches the top results.
-2. **Aggregate** — The fetched pages are cleaned and combined into a unified body of content.
-3. **Summarize** — Claude (Opus 4.6) reads the aggregated content and produces a structured summary, streamed live to your browser.
-4. **Dashboard** — View key takeaways, source links, and a topic overview in a clean UI.
+TopicRadar accepts a natural language query, detects your intent, searches the web via the
+Claude AI, and presents findings in a prioritised dashboard.
+
+| Query | Detected intent | Top content shown first |
+|---|---|---|
+| "arxiv papers on LLM reasoning" | Academic | Research Papers → Articles |
+| "how to learn React hooks" | Tutorial | Articles → Code → Discussions |
+| "TTS startup funding 2024" | Business | Articles → Discussions → Papers |
+| "quantum computing breakthroughs" | Exploratory | Articles → Papers → Discussions |
+
+### Key Features
+
+- **Intent detection** — recognises whether you want academic, tutorial, business, or
+  exploratory results and re-orders sections accordingly
+- **Content categorisation** — results grouped into Papers, News & Articles, Discussions,
+  Code, Videos (Phase 2)
+- **AI executive summary** — 2–3 paragraph synthesis with key themes and top entities
+- **Adaptive display** — primary section expanded, secondary sections collapsed by default;
+  one-click "Show all" override
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.10+
 - An [Anthropic API key](https://console.anthropic.com/)
 
 ### Setup
 
 ```bash
-# 1. Clone / navigate to the project
-cd topic-radar
-
-# 2. Install dependencies
+# 1. Install dependencies
 pip install -r requirements.txt
 
-# 3. Configure environment
+# 2. Configure environment
 cp .env.example .env
 # Edit .env and set ANTHROPIC_API_KEY=sk-ant-...
 
-# 4. Run the server
+# 3. Run the server
 python web/app.py
 ```
 
-Open [http://localhost:5000](http://localhost:5000) in your browser.
+Open **http://localhost:5001** in your browser.
 
-## Architecture
-
-```
-User Input (topic)
-      │
-      ▼
-core/search.py          ← DuckDuckGo search + page fetch
-      │
-      ▼
-core/aggregator.py      ← Merge & deduplicate results
-      │
-      ▼
-core/summarizer.py      ← Claude API (streaming summary)
-      │
-      ▼
-web/app.py (Flask)      ← SSE stream to browser
-      │
-      ▼
-Dashboard (HTML/JS/CSS)
-```
+---
 
 ## Project Structure
 
 ```
 topic-radar/
-├── CLAUDE.md              # Developer guidelines
-├── README.md              # This file
-├── requirements.txt       # Python dependencies
-├── core/
-│   ├── search.py          # Web search logic
-│   ├── summarizer.py      # AI summarization via Claude
-│   └── aggregator.py      # Combine & clean results
-├── web/
-│   ├── app.py             # Flask routes + SSE
+├── CLAUDE.md                    # Developer guidelines & coding standards
+├── README.md                    # This file
+├── requirements.txt             # Python dependencies
+│
+├── config/
+│   └── settings.py             # App configuration (loaded from env vars)
+│
+├── core/                        # Business logic (Flask-free, fully testable)
+│   ├── search.py               # Intent detection + Claude web search
+│   ├── summarizer.py           # AI summarisation (executive + per-card)
+│   ├── categorizer.py          # Content type classification
+│   └── aggregator.py           # Deduplicate, group, and prioritise results
+│
+├── web/                         # Flask application
+│   ├── app.py                  # Routes: /, /api/search, /results
 │   ├── static/
-│   │   ├── style.css
-│   │   └── script.js
+│   │   ├── css/styles.css      # Tailwind overrides + animations
+│   │   └── js/app.js           # Fetch results, render cards
 │   └── templates/
-│       └── index.html
+│       ├── base.html           # Shared layout
+│       ├── index.html          # Search homepage
+│       └── results.html        # Results dashboard
+│
 └── tests/
     ├── test_search.py
-    └── test_summarizer.py
+    ├── test_summarizer.py
+    └── test_categorizer.py
 ```
+
+---
 
 ## Configuration
 
 | Variable              | Default | Description                              |
 |-----------------------|---------|------------------------------------------|
-| `ANTHROPIC_API_KEY`   | —       | Required. Your Anthropic API key.        |
-| `FLASK_DEBUG`         | `0`     | Set to `1` to enable Flask debug mode.  |
-| `MAX_SEARCH_RESULTS`  | `5`     | Number of web results to fetch per query.|
+| `ANTHROPIC_API_KEY`   | —       | **Required.** Your Anthropic API key.    |
+| `FLASK_DEBUG`         | `0`     | Set to `1` to enable Flask debug mode.   |
+| `PORT`                | `5001`  | HTTP port for the web server.            |
+| `MAX_SEARCH_RESULTS`  | `10`    | Maximum results returned per search.     |
+| `MAX_WEB_SEARCHES`    | `3`     | Maximum Claude web_search calls / query. |
+
+---
 
 ## Running Tests
 
 ```bash
-python -m pytest tests/
+python -m pytest tests/ -v
 ```
+
+---
 
 ## Tech Stack
 
-| Component    | Technology                  |
-|--------------|-----------------------------|
-| Language     | Python 3.11+                |
-| Web server   | Flask 3.x                   |
-| AI model     | Claude Opus 4.6             |
-| Web search   | DuckDuckGo (duckduckgo-search) |
-| HTML parsing | BeautifulSoup4              |
-| Frontend     | Vanilla HTML/CSS/JS         |
+| Component    | Technology                                |
+|--------------|-------------------------------------------|
+| Language     | Python 3.10+                              |
+| Web server   | Flask 3.x                                 |
+| AI model     | Claude Haiku 4.5 (fast + high rate limit) |
+| Web search   | Claude built-in `web_search_20250305`     |
+| Frontend CSS | Tailwind CSS (CDN)                        |
+| Frontend JS  | Vanilla JavaScript                        |
+
+---
+
+## Roadmap
+
+- **Phase 1 (current):** Text content, intent-aware display, AI summary
+- **Phase 2:** Video/podcast results, search history, export, SSE streaming

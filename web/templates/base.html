@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}TopicRadar{% endblock %}</title>
+
+  <!-- Tailwind CSS (CDN — no build step required for MVP) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50:  "#eff6ff",
+              100: "#dbeafe",
+              500: "#3b82f6",
+              600: "#2563eb",
+              700: "#1d4ed8",
+            }
+          },
+          fontFamily: {
+            sans: ["-apple-system", "BlinkMacSystemFont", '"Inter"', '"Segoe UI"', "sans-serif"],
+          },
+        }
+      }
+    };
+  </script>
+
+  <!-- Custom overrides -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+</head>
+
+<body class="bg-gray-50 text-gray-900 antialiased min-h-screen flex flex-col">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+
+      <a href="/" class="flex items-center gap-2 font-semibold text-gray-900
+                         hover:text-brand-600 transition-colors">
+        <svg class="w-5 h-5 text-brand-600" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="2" y1="12" x2="22" y2="12"/>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10
+                   15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </svg>
+        <span>Topic<span class="text-brand-600">Radar</span></span>
+      </a>
+
+      <nav class="flex items-center gap-4 text-sm text-gray-500">
+        {% block nav %}{% endblock %}
+      </nav>
+
+    </div>
+  </header>
+
+  <!-- ── Page content ───────────────────────────────────────────────────── -->
+  <main class="flex-1 {% block main_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- ── Footer ─────────────────────────────────────────────────────────── -->
+  <footer class="border-t border-gray-100 py-6 mt-auto">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-xs text-gray-400">
+      TopicRadar — AI-powered research assistant
+    </div>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+
+</body>
+</html>

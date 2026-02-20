@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}{{ query }} — TopicRadar{% endblock %}
+
+{% block nav %}
+  <a href="/" class="hover:text-gray-700 transition-colors">← New search</a>
+{% endblock %}
+
+{% block main_class %}max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8{% endblock %}
+
+{% block content %}
+
+  <!-- ── Compact search bar ────────────────────────────────────────────────── -->
+  <form id="search-form" action="/results" method="GET" class="mb-8">
+    <div class="flex items-center gap-3">
+      <div class="relative flex-1 flex items-center bg-white rounded-lg border border-gray-200
+                  shadow-sm focus-within:border-brand-500 focus-within:ring-2
+                  focus-within:ring-brand-100 transition-all">
+        <svg class="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none"
+             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input
+          name="q"
+          type="text"
+          value="{{ query }}"
+          class="flex-1 bg-transparent pl-9 pr-3 py-2.5 text-sm text-gray-900
+                 outline-none rounded-lg"
+          aria-label="Refine search query"
+          required
+        />
+      </div>
+      <button
+        type="submit"
+        class="flex-shrink-0 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white
+               text-sm font-medium rounded-lg transition-colors"
+      >
+        Search
+      </button>
+    </div>
+  </form>
+
+  <!-- ── Loading skeleton ──────────────────────────────────────────────────── -->
+  <div id="loading-state" aria-live="polite" aria-label="Loading results">
+    <!-- Summary skeleton -->
+    <div class="animate-pulse mb-8">
+      <div class="h-6 bg-gray-100 rounded w-48 mb-4"></div>
+      <div class="bg-white border border-gray-200 rounded-xl p-6">
+        <div class="h-3 bg-gray-100 rounded w-24 mb-4"></div>
+        <div class="space-y-2">
+          <div class="h-4 bg-gray-100 rounded w-full"></div>
+          <div class="h-4 bg-gray-100 rounded w-5/6"></div>
+          <div class="h-4 bg-gray-100 rounded w-4/6"></div>
+        </div>
+      </div>
+    </div>
+    <!-- Results skeleton -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {% for _ in range(6) %}
+      <div class="animate-pulse bg-white border border-gray-200 rounded-xl p-5">
+        <div class="h-3 bg-gray-100 rounded w-24 mb-3"></div>
+        <div class="h-4 bg-gray-100 rounded w-full mb-2"></div>
+        <div class="h-4 bg-gray-100 rounded w-3/4 mb-4"></div>
+        <div class="space-y-1.5">
+          <div class="h-3 bg-gray-100 rounded w-full"></div>
+          <div class="h-3 bg-gray-100 rounded w-5/6"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ── Error state ────────────────────────────────────────────────────────── -->
+  <div id="error-state" class="hidden mb-8" role="alert">
+    <div class="bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-3">
+      <span class="text-red-500 text-xl flex-shrink-0" aria-hidden="true">⚠</span>
+      <div>
+        <div class="font-medium text-red-900">Search failed</div>
+        <div id="error-message" class="text-sm text-red-700 mt-1"></div>
+        <button
+          onclick="fetchResults(QUERY)"
+          class="mt-3 text-sm text-red-700 underline hover:text-red-900"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Results ────────────────────────────────────────────────────────────── -->
+  <div id="results-container" class="hidden">
+
+    <!-- Intent badge + meta -->
+    <div class="flex flex-wrap items-center gap-3 mb-5">
+      <span
+        id="intent-badge"
+        class="px-2.5 py-1 text-xs font-medium rounded-full border
+               bg-brand-50 text-brand-700 border-brand-100"
+        aria-label="Detected search intent"
+      ></span>
+      <span class="text-sm text-gray-400">
+        <span id="result-count">0</span> results ·
+        <span id="section-count">0</span> categories
+      </span>
+      <span id="time-range-badge" class="hidden px-2 py-0.5 text-xs text-gray-500
+             bg-gray-100 rounded-full border border-gray-200"></span>
+    </div>
+
+    <!-- Executive summary card -->
+    <div id="executive-summary"
+         class="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-8">
+      <div class="text-xs font-semibold uppercase tracking-widest text-brand-600 mb-3">
+        AI Executive Summary
+      </div>
+      <p id="summary-text" class="text-gray-700 leading-relaxed text-sm"></p>
+
+      <!-- Key themes -->
+      <div id="themes-row" class="hidden mt-4 flex flex-wrap items-center gap-2">
+        <span class="text-xs text-gray-400">Key themes:</span>
+        <div id="themes-list" class="flex flex-wrap gap-1.5"></div>
+      </div>
+
+      <!-- Notable trends -->
+      <div id="trends-row" class="hidden mt-3">
+        <div class="text-xs text-gray-400 mb-1.5">Notable trends:</div>
+        <ul id="trends-list" class="list-disc list-inside text-sm text-gray-600 space-y-0.5"></ul>
+      </div>
+    </div>
+
+    <!-- Result sections (populated by JS) -->
+    <div id="sections-container" role="region" aria-label="Search results"></div>
+
+    <!-- Show all collapsed sections -->
+    <div id="show-all-row" class="hidden text-center mt-6 mb-2">
+      <button
+        id="show-all-btn"
+        class="px-5 py-2 text-sm text-gray-500 hover:text-gray-700 bg-white
+               border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+      >
+        Show all categories
+      </button>
+    </div>
+
+  </div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Make the query available to app.js
+  const QUERY = {{ query | tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}

@@ -21,6 +21,7 @@ class TopicSummary(BaseModel):
     """Structured summary produced by the researcher for a given topic."""
 
     topic: str
+    lens: str = "general"   # "general" | "scientific" | "startup" | "vc"
     overview: str
     key_points: list[str]
     trends: str
@@ -33,5 +34,6 @@ class HistoryEntry(BaseModel):
 
     id: int
     topic: str
+    lens: str = "general"
     created_at: datetime
     summary: TopicSummary

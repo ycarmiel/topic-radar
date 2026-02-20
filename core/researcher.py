@@ -29,32 +29,50 @@ from core.models import SourceRef, TopicSummary
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-6"
+RESEARCH_MODEL  = "claude-haiku-4-5"   # fast + high rate limits for web search pass
+STRUCTURE_MODEL = "claude-haiku-4-5"   # fast for structuring pass
 WEB_SEARCH_BETA = "web-search-2025-03-05"
-WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search"}
+WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
 
-RESEARCH_SYSTEM = """You are Topic Radar, a senior research analyst.
-The user will give you a topic. Use the web_search tool as many times as needed
-to gather comprehensive, up-to-date information. Then write a detailed research
-report covering:
+# ── Lens-specific system prompts ───────────────────────────────────────────
 
-1. A clear overview of the topic (2-4 sentences)
-2. The most important key points (as a numbered list)
-3. Current trends and emerging developments
-4. Known gaps, limitations, or caveats in the available information
+LENS_SYSTEMS: dict[str, str] = {
+    "general": (
+        "You are a research assistant. Search the web 2-3 times: start broad, "
+        "then drill into the most interesting angle. Write a concise report: "
+        "overview, 5 key points, current trends, known gaps. Be factual."
+    ),
+    "scientific": (
+        "You are a scientific research assistant. Search 2-3 times: find recent studies, "
+        "then look for meta-analyses or expert consensus. Write a concise report: "
+        "abstract-style overview, 5 key findings with evidence quality, research trends, "
+        "methodological limitations. Prioritise peer-reviewed sources and preprints."
+    ),
+    "startup": (
+        "You are a startup analyst. Search 2-3 times: find recent launches and funding, "
+        "then look for competitive dynamics. Write a concise report: "
+        "market summary, 5 key opportunities, startup trends, risks and challenges. "
+        "Focus on actionable insights for founders."
+    ),
+    "vc": (
+        "You are a venture capital analyst. Search 2-3 times: find market size data, "
+        "then notable deals and exits. Write a concise report: "
+        "market overview, 5 investment highlights, market trends, due-diligence risks. "
+        "Use data: TAM, CAGR, multiples, notable rounds."
+    ),
+}
 
-Cite sources inline where relevant. Be factual and concise."""
-
-STRUCTURE_SYSTEM = """You are a data-extraction assistant.
-You will receive a research report and a list of web sources.
-Extract and return ONLY a JSON object that strictly matches the schema provided.
-Do not add commentary outside the JSON."""
+STRUCTURE_SYSTEM = (
+    "Extract structured data from the research report into the JSON schema provided. "
+    "Return only JSON, no commentary."
+)
 
 
 # ── Streaming research ─────────────────────────────────────────────────────
 
 def research_streaming(
     topic: str,
+    lens: str = "general",
 ) -> Generator[tuple[str, object], None, None]:
     """Stream a Claude research session with web search.
 
@@ -66,6 +84,7 @@ def research_streaming(
 
     Args:
         topic: The topic to research.
+        lens: Research perspective — "general" | "scientific" | "startup" | "vc".
 
     Raises:
         ValueError: If topic is blank.
@@ -75,19 +94,19 @@ def research_streaming(
     if not topic:
         raise ValueError("Topic must not be empty.")
 
+    system = LENS_SYSTEMS.get(lens, LENS_SYSTEMS["general"])
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     sources: list[SourceRef] = []
     text_parts: list[str] = []
 
     with client.beta.messages.stream(
-        model=MODEL,
-        max_tokens=8192,
-        thinking={"type": "adaptive"},
+        model=RESEARCH_MODEL,
+        max_tokens=1200,
         betas=[WEB_SEARCH_BETA],
         tools=[WEB_SEARCH_TOOL],
-        system=RESEARCH_SYSTEM,
-        messages=[{"role": "user", "content": f"Research this topic in depth: {topic}"}],
+        system=system,
+        messages=[{"role": "user", "content": f"Research: {topic}"}],
     ) as stream:
         for event in stream:
             event_type = getattr(event, "type", None)
@@ -97,7 +116,7 @@ def research_streaming(
                 block = getattr(event, "content_block", None)
                 if block and getattr(block, "type", None) == "web_search_tool_result":
                     for result in getattr(block, "content", []) or []:
-                        if getattr(result, "type", None) == "web_search_result":
+                        if getattr(result, "type", None) == "web_search_result" and len(sources) < 5:
                             src = SourceRef(
                                 title=getattr(result, "title", "") or "",
                                 url=getattr(result, "url", "") or "",
@@ -124,6 +143,7 @@ def structure(
     topic: str,
     raw_text: str,
     sources: list[SourceRef],
+    lens: str = "general",
 ) -> TopicSummary:
     """Convert free-form research text into a validated TopicSummary.
 
@@ -143,18 +163,18 @@ def structure(
     """
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    source_list = "\n".join(f"- {s.title}: {s.url}" for s in sources)
+    # Keep the structuring prompt small to stay within rate limits
+    truncated = raw_text[:2000] if len(raw_text) > 2000 else raw_text
+    source_list = "\n".join(f"- {s.title}: {s.url}" for s in sources[:5])
     user_content = (
         f"Topic: {topic}\n\n"
         f"Sources:\n{source_list or '(none)'}\n\n"
-        f"Research report:\n{raw_text}"
+        f"Report:\n{truncated}"
     )
 
-    schema = TopicSummary.model_json_schema()
-
     response = client.messages.parse(
-        model=MODEL,
-        max_tokens=4096,
+        model=STRUCTURE_MODEL,
+        max_tokens=700,
         system=STRUCTURE_SYSTEM,
         messages=[{"role": "user", "content": user_content}],
         output_format=TopicSummary,
@@ -166,15 +186,15 @@ def structure(
     if not structured.sources and sources:
         structured = structured.model_copy(update={"sources": sources[:10]})
 
-    # Ensure topic is set correctly
-    structured = structured.model_copy(update={"topic": topic})
+    # Ensure topic and lens are set correctly
+    structured = structured.model_copy(update={"topic": topic, "lens": lens})
 
     return structured
 
 
 # ── Convenience wrapper ────────────────────────────────────────────────────
 
-def research(topic: str) -> TopicSummary:
+def research(topic: str, lens: str = "general") -> TopicSummary:
     """Blocking research call — searches, writes, and structures in one go.
 
     Useful for CLI usage or testing. For web use, prefer research_streaming()
@@ -189,10 +209,10 @@ def research(topic: str) -> TopicSummary:
     sources: list[SourceRef] = []
     raw_text = ""
 
-    for event_type, payload in research_streaming(topic):
+    for event_type, payload in research_streaming(topic, lens=lens):
         if event_type == "source":
             sources.append(payload)
         elif event_type == "raw_text":
             raw_text = payload
 
-    return structure(topic, raw_text, sources)
+    return structure(topic, raw_text, sources, lens=lens)
